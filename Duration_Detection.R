@@ -1,14 +1,9 @@
-#Impetus: Create a K-M-type graph that shows the duration of virus detection since syptom onset from Upper Respiraty Tract (URT), Lower Respiratory Tract (LRT), and/or Stool Samples.
+#Impetus: To estimate the mean duration of virus detection since syptom onset from Upper Respiraty Tract (URT), Lower Respiratory Tract (LRT), and/or Stool Samples.
 
 #Sources:
 ##Data
 # Epi Data: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7323671/
 #Epi data others: https://www.nature.com/articles/s41591-020-0869-5#Sec2; repo: https://github.com/ehylau/COVID-19
-#Code:
-#1. Work the strings: https://cran.r-project.org/web/packages/stringr/vignettes/stringr.html
-### look: phone <- "([2-9][0-9]{2})[- .]([0-9]{3})[- .]([0-9]{4})" define a pattern
-#2. WorkCreate string patterns: https://r4ds.had.co.nz/strings.html
-#3. Functions to Extract numbers: http://stla.github.io/stlapblog/posts/Numextract.html
 
 #Methods:
 #1. Meta analysis in R: https://bookdown.org/MathiasHarrer/Doing_Meta_Analysis_in_R/
@@ -18,11 +13,11 @@
 #4. Heterogeinity: https://www.statsdirect.com/help/meta_analysis/heterogeneity.htm; https://www.meta-analysis-workshops.com/download/common-mistakes1.pdf (more complete)
 
 
-#Requiring
-library(readr); library(rvest); library(stringr);library(ggplot2); library(meta); library(dplyr); library(grid); library(gridExtra);library(cowplot)
-getwd()
+#Requiring####	
+lbs = c("readr", "rvest","stringr","ggplot2","meta","dplyr","grid","gridExtra","cowplot")
+sapply(c(lbs),require, character.only=T)
 
-#Functions
+#Functions####
 #Based on Wan et al, BMC 2014. Scenario 3. See methods 2.
 convert_median = function (iq1, iq3, median, min, max, SampleSize,Method){ 
   if (Method== 1){ #1: MinMAx; 0:IQR
@@ -96,28 +91,19 @@ extract_multi = function(string, pattern) { #finds numbers and extract them into
   options(warn = defaultW)
 }
 
-#Load data
-parameters = read.csv("../CORONAVIRUS/COVID_DATA/COVIDMIDAS/parameter_estimates/2019_novel_coronavirus/estimates.csv", header = T)
-
-parameters = parameters[order(parameters$name),]
-freq_vars = data.frame(table(parameters$name))
-freq_vars$Var1
-filter =as.character(freq_vars[50,1])
-
-View(parameters[parameters$name==filter,])
-
-
+#Load data via web scrapping####
 url="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7323671/table/tbl0002/?report=objectonly"
 epidata = url %>%
   read_html() %>%
   html_node(xpath = '//*[@id="tbl0002"]/div[2]/table') %>%
   html_table(fill = TRUE,header=TRUE)
 
-urtdata = epidata[epidata$`Aggregate study-level duration of virus detection since symptom onset from URT samples*`!=epidata[2,5],-c(8,7,6)] #Selecting upper respiratory tract samples only
+urtdata = epidata[epidata$`Aggregate study-level duration of virus detection since symptom onset from URT samples*`!=epidata[2,5],-c(8,7,6)] 
+#Selecting upper respiratory tract samples only
 colnames(urtdata)[5] = "Values"
 rownames(urtdata) = 1:nrow(urtdata)
 
-#Clean data: 
+#Clean data#### 
 # Unit: seems all are days. Confirm
 # Point estimates can be: Fixed, Mean, Median
 # Unceratinty type: Range, range, IQR, 95% CI, SD
@@ -128,7 +114,7 @@ rownames(urtdata) = 1:nrow(urtdata)
 urtdata$unitid =  ifelse(str_detect(urtdata$Values,"day|days"),1,0)
 urtdata[urtdata$unitid==0,]
 urtdata = urtdata[-56,]
-urtdata$unit =  ifelse(urtdata$uniti==1,"days","week")
+urtdata$unit =  ifelse(urtdata$unitid==1,"days","week")
 
 urtdata$pestimate =  ifelse(str_detect(urtdata$Values,"Median|median"),"Median",
                             ifelse(str_detect(urtdata$Values,"Mean|mean"),"Mean","Fixed"))
@@ -138,10 +124,10 @@ urtdata$uncert =  ifelse(str_detect(urtdata$Values,"SD|sd|SD|standard deviation"
                 ifelse(str_detect(urtdata$Values,"IQR|Iqr|iqr"),"IQR",
                        ifelse(str_detect(urtdata$Values,"95% CI|95%|CI"),"95% CI",
                               ifelse(str_detect(urtdata$Values,"Range|range"),"Range","NA"))))
-#By putting Range at the end we priortize the other estimates if there's more than one, e.g. urtdata[2,5]
+#By putting Range at the end we prioritize the other estimates if there's more than one, e.g. urtdata[2,5]
 View(urtdata[urtdata$uncert=="NA",5])
 
-#Both point estimates and uncertaitny estimate match regarding their units. Now need to extract data
+#Both point estimates and uncertainty estimate match regarding their units. Now need to extract data
 
 #Extract numbers: Start on population
 numb <- "[0-9]+" #define a pattern
@@ -156,25 +142,15 @@ length(urtdata[as.numeric(urtdata$popval)==1,1]) #21 out of 84 studies have only
 urtby = split(urtdata,as.factor(urtdata$pestimate))
 fixed = urtby$Fixed; median = urtby$Median; mean = urtby$Mean
 
-#Drop all but functions and recently created dataframes
-rm(list=setdiff(ls(),c("convert_median", "median", "mean", "fixed"))) #setdiff defines the difference within the set ls() is all elements, need to define the other 'group' with c()
-
-#workout Mean
+#get the Mean
 mean$Values = gsub(' '," ",mean$Values) #clean values
 
 mean$pestimate_val = ifelse(is.na(str_extract(mean$Values, "[0-9]+[.][0-9]+")),
                             str_extract(mean$Values, "[0-9]+"),
-                            str_extract(mean$Values, "[0-9]+[.][0-9]+")) #Done only for first match. Remeber [0-9]+ equivalent [0-9]{m,n} m:min, n:max number of characters
-
-mean$pestimate_val2 = ifelse(is.na(str_extract_all(mean$Values, "[0-9]{1,2}[.][0-9]{0,2}")),
-                            str_extract_all(mean$Values, "[0-9]{1,2}"),
-                            str_extract_all(mean$Values, "[0-9]{1,2}[.][0-9]{0,2}")) #Not good
-
-mean$pestimate_val3 = str_extract_all(mean$Values, pattern) #creates list. Not useful. Work the list out: https://stackoverflow.com/questions/13016359/how-to-directly-select-the-same-column-from-all-nested-lists-within-a-list
+                            str_extract(mean$Values, "[0-9]+[.][0-9]+")) 
+#Done only for first match. Remember [0-9]+ equivalent [0-9]{m,n} m:min, n:max number of characters
 
 mean$pestimate_val=NULL; mean$pestimate_val2=NULL; mean$pestimate_val3=NULL
-
-#rm(list=setdiff(ls(),c("convert_median", "extract_multi", "median", "mean", "fixed")))
 
 pattern  = "[0-9]+| [0-9]+ |[0-9]+[.][0-9]+| [0-9]{1,2}[.][0-9]{0,2} |\\s[0-9]{1,2}[.][0-9]{0,2}" #\s replace any space character. need double \ to scape the first \
 
@@ -182,24 +158,15 @@ finds  = extract_multi(mean$Values,pattern)
 
 mean$Mean = finds$first; mean$SD = finds$second
 #quality control
+rownames(mean) = 1:nrow(mean)
+mean[1,]$SD = 6.6
+mean[4,]$SD = 4.6
+mean[7,]$SD = 6.7
 mean[8,]$Mean = 9.71
 mean[8,]$SD = (mean[8,]$popval)^0.5*(mean[8,]$Mean-8.21)/1.95
 mean[9,]$SD = 10.7
 
-#Plot main effects
-maineffects_mean = m <- metagen(Mean, #use random effects because there's no reason to assume that all estimations stem from the same underlaying population: countries, ages, gender
-                                SD,
-                                data=mean,
-                                studlab=paste(`First Author`),
-                                comb.fixed = F,
-                                comb.random = T,
-                                method.tau = "SJ",
-                                hakn = TRUE,
-                                prediction=TRUE,
-                                sm="MD") #SMD: standirez mean difference
-forest(maineffects_mean) #Plottinf effect sizes, assumes that they arose from a "mean difference" study. In fact, here it comes from just mean estimation. Although the methods shouldn't vary.
-
-#workout Median
+#get the Median
 median$Values = gsub(' '," ",median$Values) #clean values
 finds  = extract_multi(median$Values,pattern)
 finds = cbind(median[,c(5,9:10)],finds)
@@ -258,21 +225,27 @@ median$Mean = finds$Mean; median$SD = finds$SD
 fixed$Mean = NA; fixed$SD = NA
 
 epidata_wo = rbind(mean, median, fixed)
+epidata_wo$Subpop = with(epidata_wo,
+                   ifelse(str_detect(Population,"and")==TRUE,"Children and Adults",
+                          ifelse(str_detect(Population,"adult|adult|Adults|Adults")==TRUE,"Adults",
+                                 ifelse(str_detect(Population,"children|Children")==TRUE,
+                                        "Children","Unknown"))))
+write.csv(epidata_wo, "epidata_upt.csv")
 
-#Plot main effects for whole dataset
+#Plot main effects####
 maineffects = metagen(Mean,
                       SD,
                       data=epidata_wo[!is.na(epidata_wo$Mean),],
                       studlab=paste(`First Author`),
                       comb.fixed = T,
                       comb.random = T,
-                      method.tau = "SJ",
+                      method.tau = "SJ", #different methods to estimate can tau lead to important differences in the final value and hence the prediction interval. Compare the default "DL" to "ML" and "SJ"
                       hakn = TRUE,
                       prediction=TRUE,
                       sm="MD") #SMD: standirez mean difference
 forest(maineffects) 
 
-png("../CORONAVIRUS/Projects/DurationDetection/DurationDetectionForest.png", width = 1490, height = 1000, res = 108)
+png("DurationDetectionForest.png", width = 1490, height = 1000, res = 108)
 forest(maineffects) 
 dev.off()
 
@@ -285,20 +258,32 @@ maineffects_singlemean = metamean(n=as.numeric(popval),
                                   method.tau = "SJ",
                                   hakn = TRUE,
                                   prediction=TRUE,
+                                  method.tau.ci = "QP",
                                   data = epidata_wo[!is.na(epidata_wo$Mean),])
 
 forest(maineffects_singlemean)
-png("../CORONAVIRUS/Projects/DurationDetection/DurationDetectionForestSM.png", width = 1490, height = 1000, res = 108)
+png("DurationDetectionForestSM.png", width = 1490, height = 1000, res = 108)
 forest(maineffects_singlemean) 
 dev.off()
 
-rm(list=setdiff(ls(),c("epidata_wo",'maineffects','maineffects_singlemean')))
+##use metagen to get the same results as metamean
+maineffects_c = metagen(Mean,
+                        SD/(as.numeric(popval))^0.5,
+                        data=epidata_wo[!is.na(epidata_wo$Mean),],
+                        studlab=paste(`First Author`),
+                        comb.fixed = T,
+                        comb.random = T,
+                        method.tau = "SJ",
+                        hakn = TRUE,
+                        prediction=TRUE,
+                        sm="MD")
+forest(maineffects_c) 
 
-#Final anlysis includes 35 studies, out of 84 since 52 studies do not present an uncertainty (i.e. IQR, SD) metric. 
-#When using the metagen() and metamean() functions produce similar pooled results but very different heterogeinity estimates. The former estimates the percentage of variance attributable to study heterogeneity (I^2) in 42% and the latter in 99%. Similarly, the between-study variance (tau^2) is 44.9 (p<0.01) in the former and 81.5 (p=0) in the latter. This leads to two considerations. First, a prediction interval, rather than a confidence interval provides a better approximation to the uncertainty when heterogeinity is substancial. This leads to a pooled mean not significantly different from zero under the metamean() analysis. Second, pooled estimates are not reliable when heterogeinity is large. 
-#The variance between the studies indicates systematic differences in *how* studies wwre conducted rather than just the difference in their power to detect the outcome of interest, which we could expect when between-studies variance is low. An alternative when heterogeinity is large, is to use a RE models to "allow the study outcomes to vary in a normal distribution between studies".
+png("DurationDetectionForest_corrected.png", width = 1490, height = 1000, res = 108)
+forest(maineffects_c) 
+dev.off()
 
-#analysis by sub-groups: alternatives Ppulation (children, adult), Study Design (case series, cohort); Type of measure (mean, median)
+# Analysis by sub-groups: alternatives Population (children, adult), Study Design (case series, cohort); Type of measure (mean, median)####
 epidata = epidata_wo[!is.na(epidata_wo$Mean),]
 
 epidata$Subpop = with(epidata,
@@ -321,11 +306,6 @@ metamean_r = function(df){
          data = df)
   return(r)
 }
-
-# singlemean_adults = metamean_r(epidata[epidata$Subpop=="Adults",])
-# singlemean_children = metamean_r(epidata[epidata$Subpop=="Children",])
-# singlemean_both = metamean_r(epidata[epidata$Subpop=="Children and Adults",])
-# forest(maineffects_singlemean, test.subgroup = TRUE)
 
 maineffects_subpop = update(maineffects_singlemean,byvar = epidata$Subpop)
 forest(maineffects_subpop)
@@ -352,9 +332,4 @@ for (i in plots) {
   png(path, width = 1490, height = 1000, res = 108)
   forest(get(namei), layout = "subgroup", test.subgroup = T)
   dev.off()
-}
-
-  
-  
-  ggsave(temp_plot, file=paste0("plot_", i,".png"), width = 14, height = 10, units = "cm")
-}
+}  
